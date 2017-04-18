@@ -109,6 +109,7 @@ def newOrd(n):
         return str(n)+{1:"st",2:"nd",3:"rd"}.get(n%10,"th")
 
 def makeDailyGif(R,Im):
+    import os
     # Set the time for this operation
     now = time.time()
     ia = []
@@ -156,7 +157,6 @@ def makeDailyGif(R,Im):
         rPost.reply(description+"\n\n[Click here for more daily plant gifs](https://www.reddit.com/r/"+subreddit+"/search?q=%5BDPG%5D&restrict_sr=on&sort=relevance&t=all)"
                       " or [click here to see them all at once](http://imgur.com/a/"+DAY_AL+")")
         import shutil
-        import os
         # Move 3 images to weeklies folder
         saved = [ time.strftime("%y-%m-%d-%H.jpg",time.gmtime(now - i*24/3*60*60)) for i in [0,1,2] ]
         for img in saved:
