@@ -86,11 +86,20 @@ def getImage():
                 # Force it to be normal size
                 if i.width != 400:
                     i = i.resize((400,224),Image.ANTIALIAS)
+                # Get moisture level (thanks, /u/thisguyeric!)
+                mg = str(get("http://www.pleasetakecareofmyplant.com/moisture_data.txt").content,"utf-8")
+                # pull in the last number from the file
+                try:
+                    moisture = re.search(r"[0-9]{10},\(\[.*\],([0-9]+)\),$",mg[-136:]).group(1)
+                except:
+                    # something funky happened
+                    moisture = "unkn"
                 # Initiate drawing
                 d = ImageDraw.Draw(i)
-                # Add a black box with the date in white
-                d.rectangle((0,0,75,12),(0,0,0))
+                # Add a black box with the date and moisture in white
+                d.rectangle((0,0,84,24),(0,0,0))
                 d.text((3,0),time.strftime("%y-%m-%d-%H",time.gmtime()),(255,255,255))
+                d.text((3,13),"Moisture: "+moisture,(255,255,255))
                 # Save it
                 i.save(filepath+"dailies/"+time.strftime("%y-%m-%d-%H",time.gmtime())+".jpg")
                 # Exit the loops
