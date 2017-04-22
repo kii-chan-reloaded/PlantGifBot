@@ -101,7 +101,7 @@ def getImage():
                 d.text((3,0),time.strftime("%y-%m-%d-%H",time.gmtime()),(255,255,255))
                 d.text((3,13),"Moisture: "+moisture,(255,255,255))
                 # Save it
-                i.save(filepath+"dailies/"+time.strftime("%y-%m-%d-%H",time.gmtime())+".jpg")
+                i.save(filepath+"dailies/"+time.strftime("%y-%m-%d-%H",time.gmtime())+".png")
                 # Exit the loops
                 return None
             except Exception as e:
@@ -123,7 +123,7 @@ def makeDailyGif(R,Im):
     now = time.time()
     ia = []
     # Get the images saved in the folder
-    images = [f for f in sorted(os.listdir(filepath+"dailies/")) if f[-3:] == "jpg"]
+    images = [f for f in sorted(os.listdir(filepath+"dailies/")) if f[-3:] == "png"]
     for filename in images:
         try:
             # Add PIL Image to image array (ia)
@@ -167,15 +167,15 @@ def makeDailyGif(R,Im):
                       " or [click here to see them all at once](http://imgur.com/a/"+DAY_AL+")")
         import shutil
         # Move 3 images to weeklies folder
-        saved = [ time.strftime("%y-%m-%d-%H.jpg",time.gmtime(now - i*24/3*60*60)) for i in [0,1,2] ]
+        saved = [ time.strftime("%y-%m-%d-%H.png",time.gmtime(now - i*24/3*60*60)) for i in [0,1,2] ]
         for img in saved:
             try:
                 shutil.copy2(filepath+"dailies/"+img,filepath+"weeklies/"+img)
             except:
                 continue
         # Move noon image to monthlies folder
-        shutil.copy2(filepath+"dailies/"+time.strftime("%y-%m-%d-%H.jpg",time.gmtime(now)),filepath+"monthlies/"+time.strftime("%y-%m-%d-%H.jpg",time.gmtime(now)))
-        # Delete all .jpg's in dailies folder
+        shutil.copy2(filepath+"dailies/"+time.strftime("%y-%m-%d-%H.png",time.gmtime(now)),filepath+"monthlies/"+time.strftime("%y-%m-%d-%H.png",time.gmtime(now)))
+        # Delete all .png's in dailies folder
         for f in images:
             os.remove(filepath+"dailies/"+f)
     else:
@@ -186,7 +186,7 @@ def makeWeeklyGif(R,Im):
     import os
     now = time.time()
     ia = []
-    images = [f for f in sorted(os.listdir(filepath+"weeklies/")) if f[-3:] == "jpg"]
+    images = [f for f in sorted(os.listdir(filepath+"weeklies/")) if f[-3:] == "png"]
     for filename in images:
         try:
             I = Image.open(filepath+"weeklies/"+filename)
@@ -220,7 +220,7 @@ def makeMonthlyGif(R,Im):
     import os
     now = time.time()
     ia = []
-    images = [f for f in sorted(os.listdir(filepath+"monthlies/")) if f[-3:] == "jpg"]
+    images = [f for f in sorted(os.listdir(filepath+"monthlies/")) if f[-3:] == "png"]
     for filename in images:
         try:
             I = Image.open(filepath+"monthlies/"+filename)
