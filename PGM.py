@@ -93,7 +93,7 @@ def getImage():
                     moisture = re.search(r"[0-9]{10},\(\[.*\],([0-9]+)\),$",mg[-136:]).group(1)
                 except:
                     # something funky happened
-                    moisture = "unkn"
+                    moisture = "ukn"
                 # Initiate drawing
                 d = ImageDraw.Draw(i)
                 # Add a black box with the date and moisture in white
