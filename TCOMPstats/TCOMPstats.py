@@ -84,18 +84,20 @@ def gatherData(R):
         except AttributeError:
             # Likely today's post
             continue
+        # Pick out the date
+        date = eval(re.search("[0-9]+",post.title).group())
         # Get all the root comments
         post.comments.replace_more(limit = None, threshold = 0)
-        for c in post.comments.list():
+        for c in post.comments:
             try:
                 user = c.author.name
             except:
                 # Probably a deleted account
                 continue
-            try:
-                redditors[user].append( {'vote':getCommentScore(c),'result':dayResult} )
-            except KeyError:
-                redditors[user] = [ {'vote':getCommentScore(c),'result':dayResult} ]
+            if user in redditors.keys():
+                redditors[user].append( {'date':date,'vote':getCommentScore(c),'result':dayResult} )
+            else:
+                redditors[user] = [ {'date':date,'vote':getCommentScore(c),'result':dayResult} ]
 
 def analyze(user):
     total = len(user)
@@ -103,7 +105,11 @@ def analyze(user):
     ns = 0
     agreement = 0
     waterings = 0
-    for data in user:
+    longStreak = 0
+    currStreak = 1
+    user = sorted(user,key=lambda date:date['date'])
+    for i,data in enumerate(user):
+        # Voting stuff
         if data['vote'] == 1:
             ys += 1
         elif data['vote'] == -1:
@@ -112,9 +118,22 @@ def analyze(user):
             agreement += 1
             if data['vote'] == 1:
                 waterings += 1
-    return {'yes':ys,'no':ns,'agree':agreement,'water':waterings,'total':total}
+        # Streak stuff
+        if data['date'] == user[i-1]['date'] +1:
+            currStreak += 1
+        elif data['date'] == user[i-1]['date']:
+            pass
+        else:
+            if currStreak > longStreak:
+                longStreak = currStreak
+            currStreak = 1
+    # Make sure longest streak is recorded
+    if currStreak > longStreak:
+        longStreak = currStreak
+
+    return {'yes':ys,'no':ns,'agree':agreement,'water':waterings,'total':total,'streak':longStreak}
     
-def subStatistics(subStats,data):
+def subStatistics(subStats,uniqueVoters):
     ######
     # This is pretty janky, but I'm too lazy to learn new things like ImageFont or numpy or whatever
     # ... It works, okay? What more do you want from me?
@@ -126,7 +145,6 @@ def subStatistics(subStats,data):
     mostVotes = max(comp)
     totalVotesY = sum( [ subStats[day]['yes'] for day in subStats ] )
     totalVotesN = sum( [ subStats[day]['no'] for day in subStats ] )
-    uniqueVoters = len(data)
     # Make image
     I = Image.new("RGB",(1000,600))
     I.paste((255,255,255),(0,0,1000,600))
@@ -227,17 +245,19 @@ if __name__ == '__main__':
         * You voted `no` a total of {3} time(s), accounting for {4}% of your votes
         * {5}% of your votes aligned with the watering result
         * You were directly responsible for watering Jeff {6} time(s)
+        * Your longest voting streak this month was {7} day(s)
         
         Jeff looks forward to receiving your next vote!
         """.format(user,stats['yes'],int(stats['yes']/stats['total']*100),
                    stats['no'],int(stats['no']/stats['total']*100),
-                   int(stats['agree']/stats['total']*100),stats['water']).replace("\n        \n        ","\n\n").replace("\n        *","\n*").replace("\n        "," ")
-        # Done using individual data, so replace it with the reply for ease later
-        data[user]= reply
+                   int(stats['agree']/stats['total']*100),stats['water'],stats['streak']).replace("\n        \n        ","\n\n").replace("\n        *","\n*").replace("\n        "," ")
+        # Done using individual data, so replace it with the reply and stats
+        data[user]= {'reply':reply,'stats':stats}
     # Remove flagged users
     data = { user:data[user] for user in data if data[user] }
+    longestStreak = max([ data[user]['stats']['streak'] for user in data ])
     # Create the graph and return the filepath it saved to
-    filepath = subStatistics(subStats,data)
+    filepath = subStatistics(subStats,len(data))
     # Upload to Imgur
     Im = ImgurClient(TCOMPstatsSecret.ImClid,TCOMPstatsSecret.ImScrt,TCOMPstatsSecret.ImAxss,TCOMPstatsSecret.ImRefr)
     config = {"title":"Monthly Voting Data for "+time.strftime("%B",time.gmtime(time.time()-2*24*60*60))}
@@ -255,16 +275,35 @@ if __name__ == '__main__':
         rPost = R.subreddit("takecareofmyplant").submit("Monthly Voting Data for "+time.strftime("%B",time.gmtime(time.time()-2*24*60*60)),url=uploaded['link'])
         # Not necessary outside of testing
         #R.redditor("Omnipotence_is_bliss").message("Monthly stats uploaded",uploaded['link'])
+        #########
         # Start notifying individuals about their previous month
         # TAKES FOREVEEERRRRRRRR
         for user in data:
             # Again, testing
             #if user != "Omnipotence_is_bliss":
             #    continue
+            if data[user]['stats']['streak'] == longestStreak:
+                data[user]['reply'] = data[user]['reply'].replace("day(s)","days(s)\n * You were tied for the longest streak this month!")
             t = 0
             while t < 10:
                 try:
-                    R.redditor(user).message("Your /r/TakeCareOfMyPlant monthly voting statistics",data[user].replace("REDDITLINK",rPost.shortlink))
+                    R.redditor(user).message("Your /r/TakeCareOfMyPlant monthly voting statistics",data[user]['reply'].replace("REDDITLINK",rPost.shortlink))
+                    # Overkill
+                    t=400
+                except:
+                    t+=1
+    else:
+        R.redditor("Omnipotence_is_bliss").message("Failure to upload","The monthly stat graph failed to upload")
+        for user in data:
+            # Again, testing
+            #if user != "Omnipotence_is_bliss":
+            #    continue
+            if data[user]['stats']['streak'] == longestStreak:
+                data[user]['reply'] = data[user]['reply'].replace("day(s)","days(s)\n * You were tied for the longest streak this month!")
+            t = 0
+            while t < 10:
+                try:
+                    R.redditor(user).message("Your /r/TakeCareOfMyPlant monthly voting statistics",data[user]['reply'].replace("[The subreddit-wide voting data can be viewed here](REDDITLINK). ",""))
                     # Overkill
                     t=400
                 except:
