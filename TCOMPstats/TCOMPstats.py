@@ -38,7 +38,6 @@ import re
 from PIL import Image,ImageDraw
 import time
 import TCOMPstatsSecret
-import math
 from imgurpython import ImgurClient
 
 def getCommentScore(comment):
@@ -94,6 +93,8 @@ def gatherData(R):
             except:
                 # Probably a deleted account
                 continue
+            if user == "takecareofmyplant":
+                continue
             if user in redditors.keys():
                 redditors[user].append( {'date':date,'vote':getCommentScore(c),'result':dayResult} )
             else:
@@ -133,77 +134,166 @@ def analyze(user):
 
     return {'yes':ys,'no':ns,'agree':agreement,'water':waterings,'total':total,'streak':longStreak}
     
-def subStatistics(subStats,uniqueVoters):
-    ######
-    # This is pretty janky, but I'm too lazy to learn new things like ImageFont or numpy or whatever
-    # ... It works, okay? What more do you want from me?
-    ######
-    
+def columnize(L,D,f,drawColor):
+    """
+    Make the most efficient table possible
+    """
+    L = sorted(L)
+    # Figure out the width/height of one character
+    charW = D.textsize("0")[0]
+    charH = int(D.textsize("y\n0")[1]/2)
+    # Max of string lists seems wonky. Working around it
+    lenList = [len(u) for u in L]
+    big = len(L[lenList.index(max(lenList))])+1
+    # Determine the biggest grid we can make
+    columns = int(425/((big)*charW))
+    rowsMax = int(100/charH)
+    rows = int(len(L)/columns) if len(L)%columns == 0 else int(len(L)/columns)+1
+    # If it's not big enough, reduce font size and try again
+    if rows > rowsMax:
+        columnize(L,D,f.font_variant(size=f.size-1),drawColor)
+        return None
+    # Make the table and write it
+    out = ""
+    for r in range(rows):
+        for c in range(columns):
+            if r*columns+c < len(L):
+                out += format(L[r*columns+c],str(big))
+                if c == columns -1:
+                    out += "\n"
+    D.text((575,500),out,fill=drawColor,font=f)
+    # Add lines between columns for readability
+    for c in range(columns-1):
+        D.line((575+((c+1)*2*big-1)/2*charW,500,575+((c+1)*2*big-1)/2*charW,500+rows*charH),fill=drawColor)
+
+def subStatistics(subStats,data,longestStreak):
+    """
+    BLOODY AND UGLY BUT IT TURNS OUT OKAY
+    """
     # Some numbers
     comp = [ subStats[day]['yes']+subStats[day]['no'] for day in subStats ]
     totalVotes = sum(comp)
     mostVotes = max(comp)
     totalVotesY = sum( [ subStats[day]['yes'] for day in subStats ] )
     totalVotesN = sum( [ subStats[day]['no'] for day in subStats ] )
-    # Make image
-    I = Image.new("RGB",(1000,600))
-    I.paste((255,255,255),(0,0,1000,600))
+    uniqueVoters = len(data)
+    # Define colors
+    bkg = (255,255,255,255)
+    # Set the grid color to inverse of the background at full opacity
+    drawColor = tuple(255-n for n in bkg[:-1]).__add__((255,))
+    # yes/no/total colors are used with `.__add__((A,))` where A is alpha
+    yesColor = (50,100,255)
+    noColor = (255,50,100)
+    totalColor = (50,175,100)
+    # Define fonts
+    titleFont = ImageFont.truetype("/home/keaton/.fonts/UbuntuMono-R.ttf",36)
+    subFont = titleFont.font_variant(size=24)
+    legendFont = titleFont.font_variant(size=12)
+    # Make Image
+    I = Image.new("RGBA",(1000,600),bkg)
     D = ImageDraw.Draw(I)
-    header = "/r/TakeCareOfMyPlant "+time.strftime("%B",time.gmtime(time.time()-2*24*60*60))+" Voting Stats"
-    # Center and resize header
-    sizing = D.textsize(header)
-    D.text((500-int(sizing[0]/2),20),header,(0,0,0))
-    C = I.crop((500-int(sizing[0]/2),20,500+math.ceil(sizing[0]/2),20+sizing[1]))
-    C = C.resize((C.size[0]*3,C.size[1]*3))
-    I.paste(C,(500-int(C.size[0]/2),20,500+math.ceil(C.size[0]/2),20+C.size[1]))
-    # define line colors
-    gridC = (128,128,128)
-    totalC = (50,175,100)
-    yesC = (50,100,255)
-    noC = (255,50,100)
+    header = "/r/TakeCareOfMyPlant "+time.strftime("%B %Y",time.gmtime(time.time()-2*24*60*60))+" Voting Stats"
+    sizing = D.textsize(header,font=titleFont)
+    D.text((500-int(sizing[0]/2),14),header,fill=drawColor,font=titleFont)
     # Make graph
-    for thickness in range(3):
-        D.rectangle((100+thickness,40+C.size[1]+thickness,950-thickness,390+C.size[1]-thickness),None,(0,0,0))
+    G = Image.new("RGBA",(900,372),bkg)
+    GD = ImageDraw.Draw(G)
+    # To make the graph correctly be transparent, gotta do some finessing
+    Temp = Image.new("RGBA",(850,350),bkg)
+    TMask = Image.new("L",(850,350),"white")
+    TD = ImageDraw.Draw(TMask)
     for i in range(10):
-        D.text((80,40+C.size[1]+int(350/10*i)),str(int(mostVotes-mostVotes/10*i)),(0,0,0))
-        D.line((100,40+C.size[1]+int(350/10*i),950,40+C.size[1]+int(350/10*i)),gridC)
+        # Draw the text on the graph layer, graw the grid on the mask
+        GD.text((0,int(350/10*i)),format(str(int(mostVotes-mostVotes/10*i))[::-1],"3")[::-1],(0,0,0,255),font=legendFont)
+        TD.line((0,int(350/10*i),850,int(350/10*i)),0)
+    GD.text((0,345),'  0',drawColor,font=legendFont)
+    # Easily manage different graph datas
+    graphParts = {}
+    for part in ["yes","no","total"]:
+        graphParts[part] = {}
+        # coordinates for the polygon/line
+        graphParts[part]["poly"] = [(850,350)]
+        # layer mask
+        graphParts[part]["M"] = Image.new("L",(850,350),"white")
+        # line color
+        graphParts[part]["outline"] = eval(part+"Color.__add__((255,))")
+        # polygon fill
+        if part == "total":
+            graphParts[part]["fill"] = None
+        else:
+            graphParts[part]["fill"] = eval(part+"Color.__add__((128,))")
+    # Get how many days ago each day in the last month was
     daysInMonth = [day for day in range(32) if time.strftime("%B",time.gmtime(time.time()-day*24*60*60)) == time.strftime("%B",time.gmtime(time.time()-2*24*60*60))]
-    previousDay = None
     for day in daysInMonth:
+        # Get the date for each day
         actualDay = time.strftime("%d",time.gmtime(time.time()-day*24*60*60))
-        X = 950-int(day/len(daysInMonth)*850)
-        Y = 390+C.size[1]
-        D.text((X,400+C.size[1]),actualDay,(0,0,0))
-        D.line((X,Y-350,X,Y),gridC)
+        # X position for this day according to the graph, add 20 for the graph layer position
+        X = 850-int((day)/(len(daysInMonth)-1)*850)
+        GD.text((X+20,360),actualDay,drawColor,font=legendFont)
+        TD.line((X,0,X,350),0)
         try:
+            # If voting data exists for this day, use it
             thisDay = subStats[int(actualDay)]
         except:
-            previousDay = None
+            # Otherwise, cut the graph off and continue on the next day
+            for part in graphParts:
+                if day != daysInMonth[0]:
+                    graphParts[part]["poly"].append((850-int((day-1)/(len(daysInMonth)-1)*850),350))
+                graphParts[part]["poly"].append((X,350))
+                if day != daysInMonth[-1]:
+                    graphParts[part]["poly"].append((850-int((day+1)/(len(daysInMonth)-1)*850),350))
             continue
-        if not previousDay:
-            previousDay = thisDay
-            continue
-        D.line((X,Y-350*(thisDay['yes']+thisDay['no'])/mostVotes,X+int(1/len(daysInMonth)*850),Y-350*(previousDay['yes']+previousDay['no'])/mostVotes),totalC,width=3)
-        D.line((X,Y-350*thisDay['yes']/mostVotes,X+int(1/len(daysInMonth)*850),Y-350*previousDay['yes']/mostVotes),yesC,width=3)
-        D.line((X,Y-350*thisDay['no']/mostVotes,X+int(1/len(daysInMonth)*850),Y-350*previousDay['no']/mostVotes),noC,width=3)
-        previousDay = thisDay
-    # Make legend
-    D.text((20,160+C.size[1]),"yes",yesC)
-    D.text((20,180+C.size[1]),"no",noC)
-    D.text((20,200+C.size[1]),"total",totalC)
-    # Extra stuff
-    extra = format("total votes: {0}".format(totalVotes),"20")+" | total 'yes': {0}\n".format(totalVotesY)+format("unique voters: {0}".format(uniqueVoters),"20")+" | total 'no': {0}".format(totalVotesN)
-    sizing = D.multiline_textsize(extra)
-    D.text((500-int(sizing[0]/2),425+C.size[1]),extra,(0,0,0))
-    E = I.crop((500-int(sizing[0]/2),425+C.size[1],500+math.ceil(sizing[0]/2),425+C.size[1]+sizing[1]))
-    E = E.resize((E.size[0]*2,E.size[1]*2))
-    I.paste(E,(500-int(E.size[0]/2),425+C.size[1],500+math.ceil(E.size[0]/2),425+C.size[1]+E.size[1]))
+        # Add coordinates for the day to the polygon
+        graphParts["yes"]["poly"].append((X,350*(1-thisDay["yes"]/mostVotes)))
+        graphParts["no"]["poly"].append((X,350*(1-thisDay["no"]/mostVotes)))
+        graphParts["total"]["poly"].append((X,350*(1-(thisDay["yes"]+thisDay["no"])/mostVotes)))
+    # Add grid to graph
+    Temp = Image.composite(Temp,Image.new("RGBA",(850,350),drawColor),TMask)
+    for part in graphParts:
+        # complete the polygon
+        graphParts[part]["poly"].append((0,350))
+        # Initiate drawing
+        PD = ImageDraw.Draw(graphParts[part]["M"])
+        try:
+            PD.polygon(graphParts[part]["poly"],fill=255-graphParts[part]["fill"][3])
+        except:
+            PD.polygon(graphParts[part]["poly"],fill=graphParts[part]["fill"])
+        # Outline the polygon and apply the mask
+        PD.line(graphParts[part]["poly"],width=3,fill=255-graphParts[part]["outline"][3])
+        Temp = Image.composite(Temp,Image.new("RGBA",(850,350),graphParts[part]["outline"]),graphParts[part]["M"])
+    # Put the corrected graph transparency on the graph layer
+    G.paste(Temp,(20,0),mask=Temp)
+    # Make a frame around the graph
+    for thickness in range(3):
+        GD.rectangle((20+thickness,0+thickness,870-thickness,350-thickness),None,drawColor)
+    # Paste it to full image and add legend
+    I.paste(G,(80,70))
+    D.text((20,220),"yes",yesColor.__add__((255,)),font=subFont)
+    D.text((20,260),"no",noColor.__add__((255,)),font=subFont)
+    D.text((20,300),"total",totalColor.__add__((255,)),font=subFont)
+    # Make pie chart of yes vs no votes
+    D.pieslice((10,460,110,560),-90,360*totalVotesY/totalVotes-90,fill=yesColor.__add__((255,)))
+    D.pieslice((10,460,110,560),270-360*totalVotesN/totalVotes,270,fill=noColor.__add__((255,)))
+    D.text((115,470),format("Total 'yes':","13")+format(str(totalVotesY)[::-1],"5")[::-1],fill=yesColor.__add__((255,)),font=subFont)
+    D.text((115,500),format("Total 'no':","13")+format(str(totalVotesN)[::-1],"5")[::-1],fill=noColor.__add__((255,)),font=subFont)
+    D.text((115,530),format("Total votes:","13")+format(str(totalVotes)[::-1],"5")[::-1],fill=totalColor.__add__((255,)),font=subFont)
+    # More stats
+    D.text((350,470),"Unique voters: "+str(uniqueVoters),fill=drawColor,font=subFont)
+    D.text((350,500),"Longest streak: "+str(longestStreak),fill=drawColor,font=subFont)
+    # Showcase the super-outstanding gardeners
+    D.text((620,470),"Longest streak voters:",fill=drawColor,font=subFont)
+    outstandingGardeners = [user for user in data if data[user]['stats']['streak'] == longestStreak]
+    columnize(outstandingGardeners,D,legendFont,drawColor)
+    I.show() # testing purposes
     # Save and return filepath
-    fn = "/home/keaton/Pictures/TCOMPstats"+time.strftime("%B",time.gmtime(time.time()-2*24*60*60))+".png"
+    fn = "/home/keaton/Pictures/TCOMPstats"+time.strftime("%B %Y",time.gmtime(time.time()-2*24*60*60))+".png"
     I.save(fn)
     return fn
 
+
 subStats = {}
+with open("/home/keaton/bots/TCOMPstats/voter_archive.txt","r") as f:
+    voterArchive = eval(f.read())
 
 if __name__ == '__main__':
     R = praw.Reddit(client_id = TCOMPstatsSecret.clientID,
@@ -234,6 +324,13 @@ if __name__ == '__main__':
         if stats['yes'] == 0 and stats['no'] == 0:
             data[user]=None
             continue
+        if user in voterArchive.keys():
+            for thing in ['total','yes','no','agree','water']:
+                voterArchive[user][thing] = voterArchive[user][thing] + stats[thing]
+        else:
+            voterArchive[user] = {}
+            for thing in ['total','yes','no','agree','water']:
+                voterArchive[user][thing] = stats[thing]
         reply = """Hello, /u/{0}!
         
         Within the past month, you participated in watering Jeff the plant
@@ -247,20 +344,61 @@ if __name__ == '__main__':
         * You were directly responsible for watering Jeff {6} time(s)
         * Your longest voting streak this month was {7} day(s)
         
+        With this data, here are your updated lifetime voting statistics:
+        
+        * You have voted {8} times!
+         * `Yes`: {9}
+         * `No`: {10}
+        * {11}% of your votes aligned with the watering results
+        * You have been directly responsible for watering Jeff {12} time(s)!
+        
         Jeff looks forward to receiving your next vote!
-        """.format(user,stats['yes'],int(stats['yes']/stats['total']*100),
-                   stats['no'],int(stats['no']/stats['total']*100),
-                   int(stats['agree']/stats['total']*100),stats['water'],stats['streak']).replace("\n        \n        ","\n\n").replace("\n        *","\n*").replace("\n        "," ")
+        """.format(user, stats['yes'], int(stats['yes']/stats['total']*100),
+                   stats['no'], int(stats['no']/stats['total']*100),
+                   int(stats['agree']/stats['total']*100), stats['water'],
+                   stats['streak'], voterArchive[user]['total'],
+                   voterArchive[user]['yes'], voterArchive[user]['no'],
+                   int(voterArchive[user]['agree']/voterArchive[user]['total']*100),
+                   voterArchive[user]['water']).replace("\n        \n        ","\n\n").replace("\n         *","\n *").replace("\n        *","\n*").replace("\n        "," ")
         # Done using individual data, so replace it with the reply and stats
-        data[user]= {'reply':reply,'stats':stats}
+        data[user]= {'reply':reply,'stats':stats,'archive':voterArchive[user]}
     # Remove flagged users
     data = { user:data[user] for user in data if data[user] }
+    # Grab lifetime numbers to put in the comment section
+    voteSum = 0
+    mostVotes = max( [data[user]['archive']['total'] for user in data] )
+    mostYes = max( [data[user]['archive']['yes'] for user in data] )
+    mostNo = max( [data[user]['archive']['no'] for user in data] )
+    mostWater = max( [data[user]['archive']['water'] for user in data] )
+    aligns = [int(data[user]['archive']['agree']/data[user]['archive']['total']*100) for user in data if data[user]['archive']['total'] > 10]
+    mostAligned = max(aligns)
+    leastAligned = min(aligns)
+    mostVoters = []
+    mostYesers = []
+    mostNoers = []
+    mostWaters = []
+    mostAligners = []
+    leastAligners = []
+    for user in data:
+        voteSum += data[user]['archive']['total']
+        if data[user]['archive']['total'] == mostVotes:
+            mostVoters.append(user)
+        if data[user]['archive']['yes'] == mostYes:
+            mostYesers.append(user)
+        if data[user]['archive']['no'] == mostNo:
+            mostNoers.append(user)
+        if data[user]['archive']['water'] == mostWater:
+            mostWaters.append(user)
+        if int(data[user]['archive']['agree']/data[user]['archive']['total']*100) == mostAligned and data[user]['archive']['total'] > 10:
+            mostAligners.append(user)
+        if int(data[user]['archive']['agree']/data[user]['archive']['total']*100) == leastAligned and data[user]['archive']['total'] > 10:
+            leastAligners.append(user)
     longestStreak = max([ data[user]['stats']['streak'] for user in data ])
     # Create the graph and return the filepath it saved to
-    filepath = subStatistics(subStats,len(data))
+    filepath = subStatistics(subStats,data,longestStreak)
     # Upload to Imgur
     Im = ImgurClient(TCOMPstatsSecret.ImClid,TCOMPstatsSecret.ImScrt,TCOMPstatsSecret.ImAxss,TCOMPstatsSecret.ImRefr)
-    config = {"title":"Monthly Voting Data for "+time.strftime("%B",time.gmtime(time.time()-2*24*60*60))}
+    config = {"title":"Monthly Voting Data for "+time.strftime("%B %Y",time.gmtime(time.time()-2*24*60*60))}
     t=0
     while t<30:
         try:
@@ -272,7 +410,20 @@ if __name__ == '__main__':
             time.sleep(2)
     if uploaded:
         # Slap it on reddit
-        rPost = R.subreddit("takecareofmyplant").submit("Monthly Voting Data for "+time.strftime("%B",time.gmtime(time.time()-2*24*60*60)),url=uploaded['link'])
+        rPost = R.subreddit("takecareofmyplant").submit("Monthly Voting Data for "+time.strftime("%B %Y",time.gmtime(time.time()-2*24*60*60)),url=uploaded['link'])
+        rPost.reply("""#/r/TakeCareOfMyPlant Hall of Fame Monthly Update\n\nJeff has received {0} votes as of yesterday's voting.\n\n
+                    The redditor{1} with the highest contribution{2} of lifetime votes {4} {5} ({3})\n\n
+                    {6} has the record for most `yes` votes ({7})\n\n
+                    {8} has the record for most `no` votes ({9})\n\n
+                    {10} has the record for most waterings ({11})\n\n
+                    {12} has the record for highest vote-to-outcome alignment among voters with more than 10 votes ({13}%)\n\n
+                    {14} has the record for lowest vote-to-outcome alignment among voters with more than 10 votes ({15}%)""".format(
+                    voteSum,"s" if len(mostVoters) >1 else "","s" if len(mostVoters) >1 else "",
+                    mostVotes,"are" if len(mostVoters) >1 else "is",", ".join(["/u/"+user for user in mostVoters]),
+                    ", ".join(["/u/"+user for user in mostYesers]),mostYes,", ".join(["/u/"+user for user in mostNoers]),
+                    mostNo,", ".join(["/u/"+user for user in mostWaters]),mostWater,
+                    ", ".join(["/u/"+user for user in mostAligners]),mostAligned,", ".join(["/u/"+user for user in leastAligners]),
+                    leastAligned).replace("                    ",""))
         # Not necessary outside of testing
         #R.redditor("Omnipotence_is_bliss").message("Monthly stats uploaded",uploaded['link'])
         #########
@@ -308,3 +459,6 @@ if __name__ == '__main__':
                     t=400
                 except:
                     t+=1
+
+with open("/home/keaton/bots/TCOMPstats/voter_archive.txt","w") as f:
+    f.write(str(voterArchive))
