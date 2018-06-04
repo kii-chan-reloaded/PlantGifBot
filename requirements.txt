@@ -1,0 +1,6 @@
+requests
+PIL
+praw
+imgurpython
+
+# also install Imagemagick
