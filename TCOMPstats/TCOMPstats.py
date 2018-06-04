@@ -35,23 +35,31 @@ simple statistics about their voting history.
 
 import praw
 import re
-from PIL import Image,ImageDraw
+from PIL import Image,ImageDraw,ImageFont
 import time
+import pickle
 import TCOMPstatsSecret
 from imgurpython import ImgurClient
 
+myPath = re.search(r".*?([/\\].*)",__file__[::-1]).group(1)[::-1]
+from os.path import join
+if join("home","pi") in myPath:
+    home = "/home/pi/"
+elif join("home","keaton") in myPath:
+    home = "/home/keaton/"
+
 def getCommentScore(comment):
-    # Taken directly from /u/takecareofmyyplant's source code
-    yes = re.search(r'\byes\b', comment.body, re.IGNORECASE) or re.search(r'\baye\b', comment.body, re.IGNORECASE)
-    no = re.search(r'\bno\b', comment.body, re.IGNORECASE) or re.search(r'\bnot on your nelly\b', comment.body, re.IGNORECASE)
+    # Taken mostly directly from /u/takecareofmyplant's source code
+    yes = re.search(r'\byes\b', comment.body, re.IGNORECASE) or re.search(r'\baye\b', comment.body, re.IGNORECASE) or re.search(r'\bprost\b', comment.body, re.IGNORECASE)
+    no = re.search(r'\bno\b', comment.body, re.IGNORECASE) or re.search(r'\bnot on your nelly\b', comment.body, re.IGNORECASE) or re.search(r'\bnein\b', comment.body, re.IGNORECASE)
     if yes and no:
-        return 0
-    elif yes: 
+        raise Exception
+    elif yes:
         return 1
     elif no:
         return -1
     else:
-        return 0
+        raise Exception
 
 def getWateringResult(submission):
     global subStats
@@ -67,24 +75,23 @@ def getWateringResult(submission):
         return -1
 
 def gatherData(R):
-    # Runs at the start of the month, give ourselves 2 days of wiggle room
-    lastMonth = time.time()-2*24*60*60
+    lastMonth = time.gmtime()[1]-1
     redditors = {}
     for post in R.redditor('takecareofmyplant').submissions.new(limit=None):
         # If post is over 32 days old, quit
-        if post.created_utc <= lastMonth-30*24*60*60:
+        if time.gmtime(post.created_utc)[1] < lastMonth:
             return redditors
-        # If the post is an announcement or something, skip it by checking
-        # if the full name of the month was in the post title or not 
-        if time.strftime("%B",time.gmtime(lastMonth)) not in post.title:
+        # Skip announcement posts and posts from this month- we'll pick those up next month
+        if (time.strftime("%B",time.gmtime(time.time()-7*24*60*60)) not in post.title) or (time.strftime("%B") in post.title):
+            print("Skipped "+post.title)
             continue
         try:
             dayResult = getWateringResult(post)
         except AttributeError:
-            # Likely today's post
+            # Today's post? This shouldn't happen but just in case
             continue
         # Pick out the date
-        date = eval(re.search("[0-9]+",post.title).group())
+        date = eval(time.strftime("%Y%m%d",time.gmtime(post.created_utc)))
         # Get all the root comments
         post.comments.replace_more(limit = None, threshold = 0)
         for c in post.comments:
@@ -95,10 +102,15 @@ def gatherData(R):
                 continue
             if user == "takecareofmyplant":
                 continue
-            if user in redditors.keys():
-                redditors[user].append( {'date':date,'vote':getCommentScore(c),'result':dayResult} )
-            else:
-                redditors[user] = [ {'date':date,'vote':getCommentScore(c),'result':dayResult} ]
+            try:
+                if user in redditors.keys():
+                    if date not in [ item['date'] for item in redditors[user] ]:
+                        redditors[user].append( {'date':date,'vote':getCommentScore(c),'result':dayResult} )
+                else:
+                    redditors[user] = [ {'date':date,'vote':getCommentScore(c),'result':dayResult} ]
+            except:
+                continue
+    return redditors
 
 def analyze(user):
     total = len(user)
@@ -140,8 +152,8 @@ def columnize(L,D,f,drawColor):
     """
     L = sorted(L)
     # Figure out the width/height of one character
-    charW = D.textsize("0")[0]
-    charH = int(D.textsize("y\n0")[1]/2)
+    charW = D.textsize("0",font=f)[0]
+    charH = int(D.textsize("y\n0",font=f)[1]/2)
     # Max of string lists seems wonky. Working around it
     lenList = [len(u) for u in L]
     big = len(L[lenList.index(max(lenList))])+1
@@ -186,7 +198,7 @@ def subStatistics(subStats,data,longestStreak):
     noColor = (255,50,100)
     totalColor = (50,175,100)
     # Define fonts
-    titleFont = ImageFont.truetype("/home/keaton/.fonts/UbuntuMono-R.ttf",36)
+    titleFont = ImageFont.truetype(join(home,".fonts/UbuntuMono-R.ttf"),36)
     subFont = titleFont.font_variant(size=24)
     legendFont = titleFont.font_variant(size=12)
     # Make Image
@@ -228,7 +240,7 @@ def subStatistics(subStats,data,longestStreak):
         # Get the date for each day
         actualDay = time.strftime("%d",time.gmtime(time.time()-day*24*60*60))
         # X position for this day according to the graph, add 20 for the graph layer position
-        X = 850-int((day)/(len(daysInMonth)-1)*850)
+        X = 850-int((day-1)/(len(daysInMonth)-1)*850)
         GD.text((X+20,360),actualDay,drawColor,font=legendFont)
         TD.line((X,0,X,350),0)
         try:
@@ -238,10 +250,10 @@ def subStatistics(subStats,data,longestStreak):
             # Otherwise, cut the graph off and continue on the next day
             for part in graphParts:
                 if day != daysInMonth[0]:
-                    graphParts[part]["poly"].append((850-int((day-1)/(len(daysInMonth)-1)*850),350))
+                    graphParts[part]["poly"].append((850-int((day-2)/(len(daysInMonth)-1)*850),350))
                 graphParts[part]["poly"].append((X,350))
                 if day != daysInMonth[-1]:
-                    graphParts[part]["poly"].append((850-int((day+1)/(len(daysInMonth)-1)*850),350))
+                    graphParts[part]["poly"].append((850-int((day)/(len(daysInMonth)-1)*850),350))
             continue
         # Add coordinates for the day to the polygon
         graphParts["yes"]["poly"].append((X,350*(1-thisDay["yes"]/mostVotes)))
@@ -284,16 +296,16 @@ def subStatistics(subStats,data,longestStreak):
     D.text((620,470),"Longest streak voters:",fill=drawColor,font=subFont)
     outstandingGardeners = [user for user in data if data[user]['stats']['streak'] == longestStreak]
     columnize(outstandingGardeners,D,legendFont,drawColor)
-    I.show() # testing purposes
+    #I.show() # testing purposes
     # Save and return filepath
-    fn = "/home/keaton/Pictures/TCOMPstats"+time.strftime("%B %Y",time.gmtime(time.time()-2*24*60*60))+".png"
+    fn = join(myPath,time.strftime("%B %Y.png",time.gmtime(time.time()-2*24*60*60)))
     I.save(fn)
     return fn
 
 
 subStats = {}
-with open("/home/keaton/bots/TCOMPstats/voter_archive.txt","r") as f:
-    voterArchive = eval(f.read())
+with open(join(myPath,"voter_archive.pickle"),"rb") as f:
+    voterArchive = pickle.load(f)
 
 if __name__ == '__main__':
     R = praw.Reddit(client_id = TCOMPstatsSecret.clientID,
@@ -305,14 +317,14 @@ if __name__ == '__main__':
     # For ease of switching back and forth in testing, also can save a ton of time.
     ###########
     data = gatherData(R)
-    with open("/home/keaton/TCOMPstatstest.data","w") as out:
-        out.write(str(data))
-    with open("/home/keaton/TCOMPstatstest.subdata","w") as out:
-        out.write(str(subStats))
+    #with open(myPath+"TCOMPstatstest.data","w") as out:
+    #    out.write(str(data))
+    #with open(myPath+"TCOMPstatstest.subdata","w") as out:
+    #    out.write(str(subStats))
     ###########
-    #with open("/home/keaton/TCOMPstatstest.data","r") as out:
+    #with open(myPath+"TCOMPstatstest.data","r") as out:
     #    data = eval(out.read())
-    #with open("/home/keaton/TCOMPstatstest.subdata","r") as out:
+    #with open(myPath+"TCOMPstatstest.subdata","r") as out:
     #    subStats = eval(out.read())
     ###########
     
@@ -366,11 +378,11 @@ if __name__ == '__main__':
     data = { user:data[user] for user in data if data[user] }
     # Grab lifetime numbers to put in the comment section
     voteSum = 0
-    mostVotes = max( [data[user]['archive']['total'] for user in data] )
-    mostYes = max( [data[user]['archive']['yes'] for user in data] )
-    mostNo = max( [data[user]['archive']['no'] for user in data] )
-    mostWater = max( [data[user]['archive']['water'] for user in data] )
-    aligns = [int(data[user]['archive']['agree']/data[user]['archive']['total']*100) for user in data if data[user]['archive']['total'] > 10]
+    mostVotes = max( [voterArchive[user]['total'] for user in voterArchive] )
+    mostYes = max( [voterArchive[user]['yes'] for user in voterArchive] )
+    mostNo = max( [voterArchive[user]['no'] for user in voterArchive] )
+    mostWater = max( [voterArchive[user]['water'] for user in voterArchive] )
+    aligns = [int(voterArchive[user]['agree']/voterArchive[user]['total']*100) for user in voterArchive if voterArchive[user]['total'] > 10]
     mostAligned = max(aligns)
     leastAligned = min(aligns)
     mostVoters = []
@@ -379,31 +391,33 @@ if __name__ == '__main__':
     mostWaters = []
     mostAligners = []
     leastAligners = []
-    for user in data:
-        voteSum += data[user]['archive']['total']
-        if data[user]['archive']['total'] == mostVotes:
+    for user in voterArchive:
+        voteSum += voterArchive[user]['total']
+        if voterArchive[user]['total'] == mostVotes:
             mostVoters.append(user)
-        if data[user]['archive']['yes'] == mostYes:
+        if voterArchive[user]['yes'] == mostYes:
             mostYesers.append(user)
-        if data[user]['archive']['no'] == mostNo:
+        if voterArchive[user]['no'] == mostNo:
             mostNoers.append(user)
-        if data[user]['archive']['water'] == mostWater:
+        if voterArchive[user]['water'] == mostWater:
             mostWaters.append(user)
-        if int(data[user]['archive']['agree']/data[user]['archive']['total']*100) == mostAligned and data[user]['archive']['total'] > 10:
+        if int(voterArchive[user]['agree']/voterArchive[user]['total']*100) == mostAligned and voterArchive[user]['total'] > 10:
             mostAligners.append(user)
-        if int(data[user]['archive']['agree']/data[user]['archive']['total']*100) == leastAligned and data[user]['archive']['total'] > 10:
+        if int(voterArchive[user]['agree']/voterArchive[user]['total']*100) == leastAligned and voterArchive[user]['total'] > 10:
             leastAligners.append(user)
     longestStreak = max([ data[user]['stats']['streak'] for user in data ])
     # Create the graph and return the filepath it saved to
     filepath = subStatistics(subStats,data,longestStreak)
+    input("Proceed to upload?")
     # Upload to Imgur
     Im = ImgurClient(TCOMPstatsSecret.ImClid,TCOMPstatsSecret.ImScrt,TCOMPstatsSecret.ImAxss,TCOMPstatsSecret.ImRefr)
-    config = {"title":"Monthly Voting Data for "+time.strftime("%B %Y",time.gmtime(time.time()-2*24*60*60))}
+    config = {"title":"(Corrected) Monthly Voting Data for "+time.strftime("%B %Y",time.gmtime(time.time()-2*24*60*60))}
     t=0
     while t<30:
         try:
             uploaded = Im.upload_from_path(filepath,config=config,anon=False)
-            break
+            # overkill
+            t=400
         except:
             uploaded = False
             t+=1
@@ -411,19 +425,32 @@ if __name__ == '__main__':
     if uploaded:
         # Slap it on reddit
         rPost = R.subreddit("takecareofmyplant").submit("Monthly Voting Data for "+time.strftime("%B %Y",time.gmtime(time.time()-2*24*60*60)),url=uploaded['link'])
-        rPost.reply("""#/r/TakeCareOfMyPlant Hall of Fame Monthly Update\n\nJeff has received {0} votes as of yesterday's voting.\n\n
+        rPost.reply("""#/r/TakeCareOfMyPlant Hall of Fame Monthly Update\n\nJeff has received {0} votes from {18} unique voters as of yesterday's voting.\n\n
                     The redditor{1} with the highest contribution{2} of lifetime votes {4} {5} ({3})\n\n
                     {6} has the record for most `yes` votes ({7})\n\n
                     {8} has the record for most `no` votes ({9})\n\n
                     {10} has the record for most waterings ({11})\n\n
-                    {12} has the record for highest vote-to-outcome alignment among voters with more than 10 votes ({13}%)\n\n
-                    {14} has the record for lowest vote-to-outcome alignment among voters with more than 10 votes ({15}%)""".format(
-                    voteSum,"s" if len(mostVoters) >1 else "","s" if len(mostVoters) >1 else "",
-                    mostVotes,"are" if len(mostVoters) >1 else "is",", ".join(["/u/"+user for user in mostVoters]),
-                    ", ".join(["/u/"+user for user in mostYesers]),mostYes,", ".join(["/u/"+user for user in mostNoers]),
-                    mostNo,", ".join(["/u/"+user for user in mostWaters]),mostWater,
-                    ", ".join(["/u/"+user for user in mostAligners]),mostAligned,", ".join(["/u/"+user for user in leastAligners]),
-                    leastAligned).replace("                    ",""))
+                    {12} users have the record for highest vote-to-outcome alignment among voters with more than 10 votes ({13}%){14}\n\n
+                    {15} users have the record for lowest vote-to-outcome alignment among voters with more than 10 votes ({16}%){17}""".format(
+                    voteSum,
+                    "s" if len(mostVoters) >1 else "",
+                    "s" if len(mostVoters) >1 else "",
+                    mostVotes,
+                    "are" if len(mostVoters) >1 else "is",
+                    ", ".join(["/u/"+user for user in mostVoters]),
+                    ", ".join(["/u/"+user for user in mostYesers]),
+                    mostYes,
+                    ", ".join(["/u/"+user for user in mostNoers]),
+                    mostNo,
+                    ", ".join(["/u/"+user for user in mostWaters]),
+                    mostWater,
+                    str(len(mostAligners)),
+                    mostAligned,
+                    ". Users in this group who voted last month are: "+", ".join(["/u/"+user for user in mostAligners if user in data]) if ["/u/"+user for user in mostAligners if user in data] else ". None of them voted last month",
+                    str(len(leastAligners)),
+                    leastAligned,
+                    ". Users in this group who voted last month are: "+", ".join(["/u/"+user for user in leastAligners if user in data]) if ["/u/"+user for user in leastAligners if user in data] else ". None of them voted last month",
+                    str(len(voterArchive))).replace("                    ",""))
         # Not necessary outside of testing
         #R.redditor("Omnipotence_is_bliss").message("Monthly stats uploaded",uploaded['link'])
         #########
@@ -454,11 +481,11 @@ if __name__ == '__main__':
             t = 0
             while t < 10:
                 try:
-                    R.redditor(user).message("Your /r/TakeCareOfMyPlant monthly voting statistics",data[user]['reply'].replace("[The subreddit-wide voting data can be viewed here](REDDITLINK). ",""))
+                    R.redditor(user).message("Your /r/TakeCareOfMyPlant monthly voting statistics",data[user]['reply'].replace("[The subreddit-wide voting data can be viewed here](REDDITLINK). ","The subreddit-wide voting data should be uploaded sometime today. "))
                     # Overkill
                     t=400
                 except:
                     t+=1
 
-with open("/home/keaton/bots/TCOMPstats/voter_archive.txt","w") as f:
-    f.write(str(voterArchive))
+with open(join(myPath,"voter_archive.pickle"),"wb") as f:
+    pickle.dump(voterArchive,f)
